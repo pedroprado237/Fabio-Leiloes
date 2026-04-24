@@ -12,7 +12,6 @@ Comandos no prompt:
 """
 import getpass
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -31,7 +30,6 @@ except (AttributeError, OSError):
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5000
-SHARED_HMAC_KEY = b"leilao-shared-hmac-key-2026"
 
 
 # ============================================================
@@ -157,14 +155,6 @@ def render_items_table(items: list[dict], own_user: str) -> str:
     return "\n".join(out)
 
 
-def sign(payload: bytes) -> str:
-    return hmac.new(SHARED_HMAC_KEY, payload, hashlib.sha256).hexdigest()
-
-
-def verify(payload: bytes, tag: str) -> bool:
-    return hmac.compare_digest(sign(payload), tag or "")
-
-
 # ============================================================
 #  Cliente
 # ============================================================
@@ -191,10 +181,8 @@ class AuctionClient:
     def send_json(self, obj: dict) -> None:
         if not self.sock:
             return
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        envelope = {"sig": sign(body), "body": body.decode("utf-8")}
         try:
-            self.sock.sendall((json.dumps(envelope) + "\n").encode("utf-8"))
+            self.sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
         except OSError:
             self.running = False
 
@@ -210,12 +198,8 @@ class AuctionClient:
             self.buf += chunk
         line, self.buf = self.buf.split(b"\n", 1)
         try:
-            env = json.loads(line.decode("utf-8"))
-            body = env["body"].encode("utf-8")
-            if not verify(body, env.get("sig", "")):
-                return None
-            return json.loads(body)
-        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+            return json.loads(line.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
     # ---------- Autenticação ---------- #

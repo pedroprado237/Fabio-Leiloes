@@ -301,93 +301,19 @@ self.sock = tls_ctx.wrap_socket(raw_sock)
 
 ---
 
-## BÔNUS — Integridade das mensagens (HMAC-SHA256)
+## BÔNUS — Análise crítica: por que TLS e não HMAC ou RSA?
 
-Toda mensagem trafega num envelope assinado:
-```json
-{ "sig": "<hash>", "body": "<JSON da mensagem>" }
-```
+**HMAC-SHA256** garante integridade e autenticidade, mas as mensagens trafegam em texto puro — qualquer pessoa com Wireshark na rede leria os lances e senhas. Não é criptografia.
 
-**Como funciona:**
-1. Quem envia calcula `HMAC(chave, body)` e coloca em `sig`.
-2. Quem recebe recalcula o HMAC e compara com `sig`.
-3. Se não bater — a mensagem foi adulterada em trânsito e é descartada.
+**RSA-4096 puro** também estaria errado para cifrar o tráfego: RSA é lento e tem limite de tamanho por operação (~500 bytes). Ele serve para **troca de chaves**, não para cifrar dados em fluxo. O correto seria RSA para trocar uma chave → AES-GCM para cifrar os dados — que é exatamente o que o TLS faz internamente.
 
-```python
-def sign(payload: bytes) -> str:
-    return hmac.new(SHARED_HMAC_KEY, payload, hashlib.sha256).hexdigest()
+**TLS** resolve os três requisitos de uma vez com a stdlib do Python:
 
-def verify(payload: bytes, tag: str) -> bool:
-    return hmac.compare_digest(sign(payload), tag or "")
-```
-
----
-
-## BÔNUS — Análise crítica da segurança implementada
-
-### O que o HMAC garante (e o que não garante)
-
-| Propriedade | HMAC-SHA256 implementado | O que garantiria |
-|---|---|---|
-| Integridade | ✅ mensagem não foi alterada | HMAC, assinatura digital |
-| Autenticidade | ✅ veio de quem tem a chave | HMAC, RSA |
-| **Confidencialidade** | ❌ **mensagem trafega em texto puro** | AES, TLS, Fernet |
-
-**HMAC não é criptografia** — é uma assinatura. Qualquer pessoa com Wireshark na rede consegue ler todos os lances, nomes e senhas. O enunciado pede "criptografia das comunicações", então o bônus está parcialmente atendido: autenticidade sim, confidencialidade não.
-
-### Por que não RSA-4096?
-
-RSA-4096 também não seria a escolha certa para cifrar o tráfego. RSA é lento e tem limite de tamanho por operação (~500 bytes). Ele é usado para **troca de chaves**, não para cifrar dados em fluxo contínuo. Usar RSA direto nas mensagens seria tecnicamente incorreto.
-
-O padrão moderno é: **RSA ou ECDH para trocar uma chave → AES-GCM para cifrar os dados**.
-
-### O que seria correto para completar o bônus
-
-**Opção mais simples — TLS via `ssl` (stdlib, sem instalar nada)**
-
-TLS resolve autenticação + integridade + confidencialidade de uma vez:
-```python
-# servidor
-import ssl
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-ctx.load_cert_chain("cert.pem", "key.pem")
-conn = ctx.wrap_socket(conn, server_side=True)
-
-# cliente
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-sock = ctx.wrap_socket(sock)
-```
-
-**Opção com `cryptography` — Fernet (AES-128-CBC + HMAC)**
-
-Fernet cifra **e** autentica com uma API simples:
-```python
-from cryptography.fernet import Fernet
-key = Fernet.generate_key()
-f = Fernet(key)
-
-cifrado = f.encrypt(b"minha mensagem")   # confidencial
-original = f.decrypt(cifrado)            # verifica integridade automaticamente
-```
-Limitação: a chave precisaria ser trocada com segurança antes de começar (senão quem intercepta a chave quebra tudo).
-
-**Opção mais robusta — ECDH + AES-GCM**
-
-Cada lado gera um par de chaves efêmero, fazem o handshake ECDH para derivar uma chave compartilhada **sem nunca transmiti-la**, e usam AES-GCM para cifrar. Garante também *forward secrecy* (comprometer a chave hoje não expõe sessões passadas).
-
-### Comparativo das abordagens
-
-| Abordagem | Complexidade | Confidencialidade | Observação |
-|---|---|---|---|
-| HMAC-SHA256 (atual) | Baixa | ❌ | Integridade/autenticidade apenas |
-| TLS via `ssl` (stdlib) | Baixa | ✅ | Melhor custo-benefício, sem dependência |
-| Fernet (`cryptography`) | Baixa | ✅ | Bom para protótipo, precisa trocar chave |
-| RSA-4096 puro | Alta | Parcial | Errado para dados em fluxo |
-| ECDH + AES-GCM | Alta | ✅ | Mais correto, com forward secrecy |
-
-**Conclusão para a defesa:** a implementação com HMAC atende à autenticidade mas não à confidencialidade. A evolução natural e mais simples seria `ssl.wrap_socket` (TLS), que usa só a stdlib e adicionaria criptografia completa com poucas linhas.
+| Propriedade | TLS implementado |
+|---|---|
+| Confidencialidade | ✅ tráfego cifrado com AES |
+| Integridade | ✅ MAC interno do TLS |
+| Autenticidade | ✅ certificado do servidor |
 
 ---
 
@@ -406,5 +332,4 @@ Cada lado gera um par de chaves efêmero, fazem o handshake ECDH para derivar um
 | Painel em tempo real | `client.py:listen_loop` |
 | Persistência em arquivo | `server.py:_persist_item_locked` |
 | **BÔNUS** Autenticação | `server.py:_try_auth` |
-| **BÔNUS** Integridade HMAC | `sign/verify` em ambos |
-| **BÔNUS** Confidencialidade TLS | `server.py:258` · `client.py:186` |
+| **BÔNUS** Criptografia TLS | `server.py:258` · `client.py:186` |

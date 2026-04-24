@@ -16,7 +16,6 @@ Comandos do console admin:
 Protocolo: JSON por linha sobre TCP.
 """
 import hashlib
-import hmac
 import json
 import os
 import socket
@@ -45,9 +44,6 @@ USERS = {
     "Breu_Autopeças": hashlib.sha256(b"senha654").hexdigest(),
     "admin": hashlib.sha256(b"admin").hexdigest(),
 }
-
-SHARED_HMAC_KEY = b"leilao-shared-hmac-key-2026"
-
 
 # ============================================================
 #  UI helpers (cores ANSI + formatação)
@@ -224,17 +220,6 @@ def render_items_table(items: list[dict]) -> str:
 
 
 # ============================================================
-#  HMAC (integridade das mensagens)
-# ============================================================
-def sign(payload: bytes) -> str:
-    return hmac.new(SHARED_HMAC_KEY, payload, hashlib.sha256).hexdigest()
-
-
-def verify(payload: bytes, tag: str) -> bool:
-    return hmac.compare_digest(sign(payload), tag or "")
-
-
-# ============================================================
 #  Servidor
 # ============================================================
 class AuctionServer:
@@ -303,10 +288,7 @@ class AuctionServer:
     # ---------- Rede ---------- #
     def send_json(self, conn: socket.socket, obj: dict) -> None:
         try:
-            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-            tag = sign(body)
-            envelope = {"sig": tag, "body": body.decode("utf-8")}
-            data = (json.dumps(envelope) + "\n").encode("utf-8")
+            data = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
             conn.sendall(data)
         except OSError:
             pass
@@ -332,11 +314,11 @@ class AuctionServer:
                     line = line.strip()
                     if not line:
                         continue
-                    msg = self._parse_envelope(line)
+                    msg = self._parse_msg(line)
                     if msg is None:
                         self.send_json(
                             conn,
-                            {"type": "error", "message": "assinatura/json inválido"},
+                            {"type": "error", "message": "json inválido"},
                         )
                         continue
                     if user is None:
@@ -358,15 +340,10 @@ class AuctionServer:
                 log_warn(f"{C.BOLD}{user}{C.RESET} desconectou")
 
     @staticmethod
-    def _parse_envelope(raw: bytes) -> dict | None:
+    def _parse_msg(raw: bytes) -> dict | None:
         try:
-            env = json.loads(raw.decode("utf-8"))
-            body_str = env["body"]
-            tag = env.get("sig", "")
-            if not verify(body_str.encode("utf-8"), tag):
-                return None
-            return json.loads(body_str)
-        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+            return json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
     # ---------- Autenticação ---------- #
@@ -380,7 +357,7 @@ class AuctionServer:
         p = msg.get("password", "")
         expected = USERS.get(u)
         got = hashlib.sha256(p.encode("utf-8")).hexdigest()
-        if not expected or not hmac.compare_digest(expected, got):
+        if not expected or expected != got:
             self.send_json(
                 conn, {"type": "auth_fail", "message": "credenciais inválidas"}
             )

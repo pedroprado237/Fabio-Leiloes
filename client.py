@@ -17,6 +17,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import sys
 import threading
 
@@ -179,9 +180,13 @@ class AuctionClient:
 
     # ---------- Rede ---------- #
     def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.host, self.port))
-        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw_sock.connect((self.host, self.port))
+        raw_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        tls_ctx = ssl.create_default_context()
+        tls_ctx.check_hostname = False   # cert auto-assinado não tem hostname válido
+        tls_ctx.verify_mode = ssl.CERT_NONE
+        self.sock = tls_ctx.wrap_socket(raw_sock)
 
     def send_json(self, obj: dict) -> None:
         if not self.sock:

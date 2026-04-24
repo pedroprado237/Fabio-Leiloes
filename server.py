@@ -20,6 +20,7 @@ import hmac
 import json
 import os
 import socket
+import ssl
 import sys
 import threading
 from datetime import datetime
@@ -253,8 +254,12 @@ class AuctionServer:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((self.host, self.port))
         self.sock.listen(32)
+
+        tls_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_ctx.load_cert_chain("cert.pem", "key.pem")
+
         banner()
-        log_ok(f"Escutando em {C.BOLD}{self.host}:{self.port}{C.RESET}")
+        log_ok(f"Escutando em {C.BOLD}{self.host}:{self.port}{C.RESET} {C.BR_GREEN}[TLS]{C.RESET}")
         log_info(f"Usuários cadastrados: {C.BOLD}{len(USERS)}{C.RESET} "
                  f"{C.DIM}(digite 'help' para ver os comandos){C.RESET}")
         print()
@@ -262,8 +267,9 @@ class AuctionServer:
 
         while self.running:
             try:
-                conn, addr = self.sock.accept()
-            except OSError:
+                raw_conn, addr = self.sock.accept()
+                conn = tls_ctx.wrap_socket(raw_conn, server_side=True)
+            except (OSError, ssl.SSLError):
                 break
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             threading.Thread(

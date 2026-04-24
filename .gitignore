@@ -1,3 +1,7 @@
 .claude/
 __pycache__/
 auction_history.log
+
+# Chave privada TLS (nunca commitar)
+*.pem
+*.key
